@@ -1,48 +1,5 @@
 import datetime
-
-def _join_str(a, b, separator):
-    """ Helper function to manage concatenation appropriately """
-    if len(a) and len(b):
-        return separator.join((a, b))
-    elif len(a):
-        return a
-    else:
-        return b
-
-def _pi_str(self):
-    """ __str__ function for PathInfo """
-
-    def params_str(param_list, separator):
-        # Stringizes a parameter and its value
-        ret_str = ''
-        for p in param_list:
-            if p.value != True:
-                ret_str = _join_str(ret_str, _join_str(p.name, p.value, '='), separator)
-            else:
-                ret_str = _join_str(ret_str, p.name, separator)
-        return ret_str       
-
-    def element_str(element):
-        # Stringizes a specific element
-        return _join_str(element.element_value, params_str(element.element_params, ';'), ';')
-
-    ret_str = ''
-    if len(self.path_elements):
-        for element in self.path_elements:
-            ret_str = _join_str(ret_str, element_str(element), '/')
-
-    if len(self.query_parameters):
-        query_str = params_str(self.query_parameters, '&')
-        ret_str = _join_str(ret_str, query_str, '?')
-
-    return _join_str('/', ret_str, '')
-
-ElementInfo = collections.namedtuple('ElementInfo', ['element_value', 'element_params'])
-ParamInfo = collections.namedtuple('ParamInfo', ['name', 'value'])
-PathInfo = collections.namedtuple('PathInfo', ['path_elements', 'query_parameters'])
-PathInfo.__str__ = _pi_str
-
-
+import zen_path_info as pi
 
 METHOD_GET = 'GET'
 METHOD_POST = 'POST'
@@ -128,8 +85,9 @@ def _build_context(element, parameter_set, base_context=None):
 	If the element contains values that are not specified in the parameter_set, then this will
 	generate an error.
 	"""
+
 	# Create the base context_value object
-	context_values = base_context if not None else dict()
+	context_values = base_context if base_context else dict()
 	# Iterate over the parameter set to retrieve each parameter's default values and update
 	for param_name, (param_default_creator, parse_fn_for_user_value) in parameter_set.items():
 		# Initially will be using the default
@@ -149,11 +107,11 @@ def _build_context(element, parameter_set, base_context=None):
 		if not context_values.get(supplied_param.name):
 			# Additional, unknown parameter was supplied
 			return ((400, 'Unknown context parameter supplied: ' + supplied_param.name),None)
-	
+
 	# All good
 	return ((200, ''), context_values) 	
 
-def _version_1_0_aspect_checker(element_list, context, namespace, method):
+def _version_1_0_aspect_checker(aspect_element, context, namespace, method):
 	"""
 	Determines the validity of the requested aspect for the specified namespace.
 
@@ -163,17 +121,11 @@ def _version_1_0_aspect_checker(element_list, context, namespace, method):
 
 	
 
-def _version_1_0_namespace_existence_checker(element_list, context, namespace, method):
+def _version_1_0_namespace_existence_checker(namespace_element, context, namespace, method):
 	"""
 	Determines the validity of the namespace requested, and extracts any additional
 	parameters that have been specified with the namespace processing
 	"""
-	# Expect an element to be available
-	if not len(element_list):
-		return ((404, 'Bad request'), None, None)
-
-	namespace_element = element_list[0]
-
 	# Retrieve the details of the namespace 
 	matched_namespace = NAMESPACE_DATA.get(namespace_element.element_value, None)
 	if not matched_namespace:
@@ -188,28 +140,17 @@ def _version_1_0_namespace_existence_checker(element_list, context, namespace, m
 	return ((status, ''), extended_context, namespace_element.element_value)
 
 
-def _version_1_0_namespace_element_checker(element_list, context, namespace, method):
+def _version_1_0_namespace_element_checker(element, context, namespace, method):
 	"""
 	Validates that we have simply a "namespace" element with no adornment
 	"""
-	# Expect an element to be available
-	if not len(element_list):
-		return ((404, 'Bad request'), None, None)
-
-	check_state = _check_no_parameters(element_list[0], NAMESPACE)
+	check_state = _check_no_parameters(element, NAMESPACE)
 	return (check_state, context, namespace)
 
-def _version_1_0_context_checker(element_list, context, namespace, method):
+def _version_1_0_context_checker(context_element, context, namespace, method):
 	"""
 	Validates the "context" element in the URL
 	"""
-	# Expect an element to be available
-	if not len(element_list):
-		return ((404, 'Bad request'), None, None)
-
-	# First element should be "context", with zero or more matrix parameters
-	context_element = element_list[0]
-
 	if context_element.element_value != CONTEXT:
 		return ((400, 'No context element specified'), None, None)
 
@@ -226,9 +167,9 @@ def _version_1_0_validation_builder():
 	Provides the sequence of validation steps to perform on the URL for version 1.0 of the API
 	"""
 	validation_sequence = []
-	validation_sequence.append(_version_1_0_context_checker)
-	validation_sequence.append(_version_1_0_namespace_element_checker)
-	validation_sequence.append(_version_1_0_namespace_existence_checker)
+	validation_sequence.append((_version_1_0_context_checker, False))
+	validation_sequence.append((_version_1_0_namespace_element_checker, True))
+	validation_sequence.append((_version_1_0_namespace_existence_checker, False))
 	return validation_sequence
 
 def _version_1_0_request_validator(element_list, method):
@@ -238,10 +179,27 @@ def _version_1_0_request_validator(element_list, method):
 	"""
 	context = None
 	namespace = None
-	for validator in _version_1_0_validation_builder():
-		((status, error_message), context, namespace) = validator(element_list[1:], context, namespace, method)
+	validators = _version_1_0_validation_builder()
+	for (validator, next_element_must_be_present) in validators:
+		
+		# Validate the current element
+		((status, error_message), context, namespace) = validator(element_list[0], context, namespace, method)
+
 		if status != 200:
+			# Validation failure
 			return (status, error_message)
+
+		# Pop off the first element
+		element_list = element_list[1:]
+		if not len(element_list):
+			if next_element_must_be_present:
+				# This is not a stopping point of the API, but there are no more elements
+				return (404, 'Path too short')
+			else:
+				# Valid stopping point
+				break
+
+	# All good - syntactically correct URL
 	return (200, '')
 
 """ The set of validators for each version of the API """
@@ -251,10 +209,13 @@ def validate_request_details(path_info, method):
 	""" 
 	All API requests should be of the form /<version>/context[matrix parameters]/namespace/...
 	so use this information to identify correct validator
+
+	The expectation is that the path_info is an instance of zen_path_info.PathInfo class
+
 	"""
 
-	# Must have some elements
-	if not len(path_info.path_elements):
+	# Must have some elements - at least the version element and one more
+	if len(path_info.path_elements) < 2:
 		return (404, 'Incorrect path specified')
 
 	version_element = path_info.path_elements[0]
@@ -265,7 +226,7 @@ def validate_request_details(path_info, method):
 		return (status, error)
 
 	# Retrieve validator from the version list
-	version_validator = _API_VERSIONS[version_element.element_value]
+	version_validator = _API_VERSIONS.get(version_element.element_value, None)
 	if not version_validator:
 		return (404, 'Invalid version of API specified: ' + version_element.element_value)
 
@@ -274,3 +235,31 @@ def validate_request_details(path_info, method):
 		return version_validator(path_info.path_elements[1:], method)
 	except Exception as e:
 		return (500, e.message)
+
+
+if __name__ == "__main__":
+
+	def run_test(url, method, expected_status=200):
+		url_parts = url.split('?')
+		url_path = url_parts[0]
+		url_qp = url_parts[1] if len(url_parts) > 1 else ''
+		(status, error_message) = validate_request_details(pi.PathInfo(url_path, url_qp), method)
+
+		if status == expected_status:
+			print "Testing:", url, method, "- passed"
+		else:
+			print "Testing:", url, method, "- failed", '({})'.format(status), error_message
+
+	# Run some tests
+	run_test('', METHOD_GET, 404)
+	run_test('a', METHOD_GET, 404)
+	run_test('1.0', METHOD_GET, 404)
+	run_test('1.0/a', METHOD_GET, 400)
+	run_test('1.0/context', METHOD_GET, 200)
+	run_test('1.0;a=b/context', METHOD_GET, 400)	
+	run_test('1.0/context;a=b', METHOD_GET, 400)
+	run_test('1.0/context;as_of=b', METHOD_GET, 200)
+	run_test('1.0/context;as_of=b/namespace', METHOD_GET, 404)
+	run_test('1.0/context;as_of=b/namespace/fred', METHOD_GET, 400)
+	run_test('1.0/context;as_of=b/namespace/global', METHOD_GET, 200)
+	run_test('1.0/context;as_of=b/namespace/global;x=y', METHOD_GET, 400)
