@@ -162,14 +162,29 @@ def _version_1_0_context_checker(context_element, context, namespace, method):
 	# All good - return context as well
 	return ((200,''), context_values, None)
 
+def _version_1_0_stopped(context, namespace, method):
+	"""
+	If the request URL is just /1.0/context then there should be no parameters specified
+	and the only valid method is GET
+	"""
+
+	if method != METHOD_GET:
+		return (404, 'Invalid request - {}'.format(method))
+
+	for param_name, (param_defaulted, param_value) in context.items():
+		if not param_defaulted:
+			return (404, 'Parameters incorrectly defined on request')
+
+	return (200,'')
+
 def _version_1_0_validation_builder():
 	"""
 	Provides the sequence of validation steps to perform on the URL for version 1.0 of the API
 	"""
 	validation_sequence = []
-	validation_sequence.append((_version_1_0_context_checker, False))
-	validation_sequence.append((_version_1_0_namespace_element_checker, True))
-	validation_sequence.append((_version_1_0_namespace_existence_checker, False))
+	validation_sequence.append((_version_1_0_context_checker, False, _version_1_0_stopped))
+	validation_sequence.append((_version_1_0_namespace_element_checker, True, None))
+	validation_sequence.append((_version_1_0_namespace_existence_checker, False, _version_1_0_stopped))
 	return validation_sequence
 
 def _version_1_0_request_validator(element_list, method):
@@ -180,7 +195,7 @@ def _version_1_0_request_validator(element_list, method):
 	context = None
 	namespace = None
 	validators = _version_1_0_validation_builder()
-	for (validator, next_element_must_be_present) in validators:
+	for (validator, next_element_must_be_present, stopping_checks) in validators:
 		
 		# Validate the current element
 		((status, error_message), context, namespace) = validator(element_list[0], context, namespace, method)
@@ -196,8 +211,14 @@ def _version_1_0_request_validator(element_list, method):
 				# This is not a stopping point of the API, but there are no more elements
 				return (404, 'Path too short')
 			else:
-				# Valid stopping point
-				break
+				# Check whether the request is valid for this stop point
+				(status, error_message) = stopping_checks(context, namespace, method)
+				if status == 200:
+					# Valid stopping point
+					break
+				else:
+					# Something was badly formed with the request for it to stop here
+					return (status, error_message)
 
 	# All good - syntactically correct URL
 	return (200, '')
@@ -255,11 +276,13 @@ if __name__ == "__main__":
 	run_test('a', METHOD_GET, 404)
 	run_test('1.0', METHOD_GET, 404)
 	run_test('1.0/a', METHOD_GET, 400)
+	run_test('1.0/context', METHOD_POST, 404)
 	run_test('1.0/context', METHOD_GET, 200)
 	run_test('1.0;a=b/context', METHOD_GET, 400)	
 	run_test('1.0/context;a=b', METHOD_GET, 400)
-	run_test('1.0/context;as_of=b', METHOD_GET, 200)
+	run_test('1.0/context;as_of=b', METHOD_GET, 404)
 	run_test('1.0/context;as_of=b/namespace', METHOD_GET, 404)
 	run_test('1.0/context;as_of=b/namespace/fred', METHOD_GET, 400)
-	run_test('1.0/context;as_of=b/namespace/global', METHOD_GET, 200)
+	run_test('1.0/context/namespace/global', METHOD_GET, 200)
+	run_test('1.0/context;as_of=b/namespace/global', METHOD_GET, 404)
 	run_test('1.0/context;as_of=b/namespace/global;x=y', METHOD_GET, 400)
