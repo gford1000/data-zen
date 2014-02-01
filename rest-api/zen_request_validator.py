@@ -85,7 +85,7 @@ def _build_1_0_tree():
 
 	namespace_element = APITreeProcessor(
 							af._namespace_element_checker,
-							af._exec_noop,
+							af._return_namespaces,
 							True,	# Returns the list of visible namespaces based on metadata type
 							af._stopped_get_only,
 							[])

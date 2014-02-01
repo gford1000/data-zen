@@ -34,10 +34,13 @@ def as_of_user_supplied(date_str):
 	return as_of_date_default()
 
 NAMESPACE_DATA = { 'global':
-						{ DESCRIPTION:'',
-                          PARAMETERS:{},
-                          ASPECTS:[ASPECT_VALUE_TYPES, ASPECT_VALUE_RULES, ASPECT_CODE_RULES, ASPECT_DEPENDENTS, ASPECT_HISTORY] 
-                        } 
+						{
+							MODEL: 
+								{ DESCRIPTION:'Globally available types, rules, and change history',
+			                      PARAMETERS:{},
+			                      ASPECTS:[ASPECT_VALUE_TYPES, ASPECT_VALUE_RULES, ASPECT_CODE_RULES, ASPECT_DEPENDENTS, ASPECT_HISTORY] 
+			                    } 
+						}
                  }
 
 API_VERSION_ASPECT_INFO = { 

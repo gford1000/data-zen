@@ -61,6 +61,15 @@ def _build_context(element, parameter_set, base_context=None):
 def _exec_noop(request_context):
 	return {}
 
+def _return_namespaces(request_context):
+	ret_vals = dict()
+	for namespace_name, namespace_meta_map in pd.NAMESPACE_DATA.items():
+		meta_specific_map = namespace_meta_map.get(request_context.meta_type, None)
+		print request_context.meta_type, meta_specific_map
+		if meta_specific_map:
+			ret_vals[namespace_name] = meta_specific_map[pd.DESCRIPTION]
+	return ret_vals
+
 def _return_context_parameters(request_context):
 	"""
 	Returns the context parameters available for the version
@@ -85,6 +94,10 @@ def _namespace_existence_checker(namespace_element, request_context):
 	"""
 	# Retrieve the details of the namespace 
 	matched_namespace = pd.NAMESPACE_DATA.get(_to_lower(namespace_element.element_value), None)
+	if not matched_namespace:
+		return (400, 'Unknown namespace "{}" specified'.format(namespace_element.element_value))
+	# Retrieve the details for the meta type of the request
+	matched_namespace = matched_namespace.get(request_context.meta_type, None)
 	if not matched_namespace:
 		return (400, 'Unknown namespace "{}" specified'.format(namespace_element.element_value))
 
