@@ -1,270 +1,151 @@
 import datetime
+import collections
+import zen_api_functions as af
+import zen_path_data as pd
 import zen_path_info as pi
+import zen_request_context as rc
 
-METHOD_GET = 'GET'
-METHOD_POST = 'POST'
-
-API_VERSION_1_0 = '1.0'
-
-DESCRIPTION = 'description'
-PARAMETERS = 'parameters'
-
-ASPECTS = 'aspects'
-ASPECT_VALUE_TYPES = 'value_types'
-ASPECT_VALUE_RULES = 'value_rules'
-ASPECT_CODE_RULES = 'code_rules'
-ASPECT_DEPENDENTS = 'dependents'
-ASPECT_HISTORY = 'history'
-CONTEXT = 'context'
-CONTEXT_DEFINED_PARAMETERS = 'defined_parameters'
-CONTEXT_ASPECT_APPLICABILITY = 'aspect_applicability'
-NAMESPACE = 'namespace'
-
-CONTEXT_AS_OF = 'as_of'
-
-def as_of_date_default():
-	return datetime.datetime.utcnow()
-def as_of_user_supplied(date_str):
-	# To do: parse date that was supplied
-	return as_of_date_default()
-
-NAMESPACE_DATA = { 'global':
-						{ DESCRIPTION:'',
-                          PARAMETERS:{},
-                          ASPECTS:[ASPECT_VALUE_TYPES, ASPECT_VALUE_RULES, ASPECT_CODE_RULES, ASPECT_DEPENDENTS, ASPECT_HISTORY] 
-                        } 
-                 }
-
-API_VERSION_ASPECT_INFO = { 
-			API_VERSION_1_0 : {
-				ASPECTS:
-					{  ASPECT_VALUE_TYPES:[METHOD_POST, METHOD_GET],
-	                   ASPECT_VALUE_RULES:[METHOD_GET, METHOD_POST],
-	                   ASPECT_CODE_RULES:[METHOD_GET, METHOD_POST],
-	                   ASPECT_DEPENDENTS:[METHOD_GET],
-	                   ASPECT_HISTORY:[METHOD_GET]
-	                },
-	            CONTEXT:
-	            	{
-	            		CONTEXT_DEFINED_PARAMETERS:
-	            			{
-	            				CONTEXT_AS_OF:(as_of_date_default, as_of_user_supplied)
-	            			},
-	            		CONTEXT_ASPECT_APPLICABILITY:
-	            			{
-	            				ASPECT_VALUE_TYPES:[CONTEXT_AS_OF],
-	            				ASPECT_VALUE_RULES:[CONTEXT_AS_OF],
-	            				ASPECT_CODE_RULES:[CONTEXT_AS_OF],
-	            				ASPECT_DEPENDENTS:[],
-	            				ASPECT_HISTORY:[]
-	            			}
-	            	}
-            }}
-
-def _check_no_parameters(element, element_value=None):
+class APITreeProcessor(object):
 	"""
-	Helper function since several elements should not have parameters defined
+	Class that coordinates validationn of a given URL against a tree-based API definition,
+	populating the RequestContext accordingly
 	"""
-	if element_value:
-		# Expected value for this element
-		if element.element_value != element_value:
-			return (400, 'Expected element: ' + element_value)
+	def __init__(self, validator_fn, executor_fn, stoppable, stopping_validator_fn, next_elements):
+		"""
+		Initialises an instance of the class with the required functions
+		"""
+		self.validator_fn = validator_fn
+		self.executor_fn = executor_fn
+		self.stoppable = stoppable
+		self.stopping_validator_fn = stopping_validator_fn
+		self.next_elements = next_elements
 
-	# Element should not have any matrix parameters
-	if len(element.element_params):
-		return (400, element.element_value + ' should not have matrix parameters specified')
+		# These should never happen
+		if not self.validator_fn:
+			raise Exception('Inconsistent initialisation of APITreeProcessor: no validator_fn specified')
+		if not self.stoppable and len(self.next_elements) == 0:
+			raise Exception('Inconsistent initialisation of APITreeProcessor: cannot stop but has no additional nodes')
+		if self.stoppable:
+			if not self.stopping_validator_fn:
+				raise Exception('Inconsistent initialisation of APITreeProcessor: stoppable but no stopping_validator_fn specified')
+			if not self.executor_fn:
+				raise Exception('Inconsistent initialisation of APITreeProcessor: stoppable but no executor_fn specified')
 
-	return (200, '')
+	def handle_element(self, request_context, element, further_elements = []):
+		"""
+		Process the current element, using and updating the request context appropriately
+		"""
 
-def _build_context(element, parameter_set, base_context=None):
-	"""
-	Creates a context by starting with the base_context (if defined), then adding/replacing
-	it's values with the defaults specified in the parameter set, and then finally replacing
-	this value with the value specified in the element if it exists.
-
-	If the element contains values that are not specified in the parameter_set, then this will
-	generate an error.
-	"""
-
-	# Create the base context_value object
-	context_values = base_context if base_context else dict()
-	# Iterate over the parameter set to retrieve each parameter's default values and update
-	for param_name, (param_default_creator, parse_fn_for_user_value) in parameter_set.items():
-		# Initially will be using the default
-		param_is_defaulted = True
-		param_value = param_default_creator()
-		# Look for parameter within supplied element
-		for supplied_param in element.element_params:
-			if supplied_param.name == param_name:
-				# Found parameter in element, so use that instead
-				param_is_defaulted = False
-				param_value = parse_fn_for_user_value(supplied_param.value)
-				break
-		context_values[param_name] = (param_is_defaulted, param_value)
-
-	# Check for unexpected additional parameters supplied by the user
-	for supplied_param in element.element_params:
-		if not context_values.get(supplied_param.name):
-			# Additional, unknown parameter was supplied
-			return ((400, 'Unknown context parameter supplied: ' + supplied_param.name),None)
-
-	# All good
-	return ((200, ''), context_values) 	
-
-def _version_1_0_aspect_checker(aspect_element, context, namespace, method):
-	"""
-	Determines the validity of the requested aspect for the specified namespace.
-
-	Also verifies that the method type can be used on this aspect, and that the 
-	set of non-default context parameters is correct as well.
-	"""
-
-	
-
-def _version_1_0_namespace_existence_checker(namespace_element, context, namespace, method):
-	"""
-	Determines the validity of the namespace requested, and extracts any additional
-	parameters that have been specified with the namespace processing
-	"""
-	# Retrieve the details of the namespace 
-	matched_namespace = NAMESPACE_DATA.get(namespace_element.element_value, None)
-	if not matched_namespace:
-		return ((400, 'Unknown namespace "{}" specified'.format(namespace_element.element_value)),None, None)
-
-	# Create extended context from optional additional namespace parameters
-	((status, error_message), extended_context) = _build_context(namespace_element, matched_namespace[PARAMETERS], context)
-	if status != 200:
-		return ((status, error_message), None, None)
-
-	# Namespace has been validated
-	return ((status, ''), extended_context, namespace_element.element_value)
-
-
-def _version_1_0_namespace_element_checker(element, context, namespace, method):
-	"""
-	Validates that we have simply a "namespace" element with no adornment
-	"""
-	check_state = _check_no_parameters(element, NAMESPACE)
-	return (check_state, context, namespace)
-
-def _version_1_0_context_checker(context_element, context, namespace, method):
-	"""
-	Validates the "context" element in the URL
-	"""
-	if context_element.element_value != CONTEXT:
-		return ((400, 'No context element specified'), None, None)
-
-	# Create base level context parameters
-	((status, error_message), context_values) = _build_context(context_element, API_VERSION_ASPECT_INFO[API_VERSION_1_0][CONTEXT][CONTEXT_DEFINED_PARAMETERS])
-	if status != 200:
-		return ((status, error_message), None, None)
-
-	# All good - return context as well
-	return ((200,''), context_values, None)
-
-def _version_1_0_stopped(context, namespace, method):
-	"""
-	If the request URL is just /1.0/context then there should be no parameters specified
-	and the only valid method is GET
-	"""
-
-	if method != METHOD_GET:
-		return (404, 'Invalid request - {}'.format(method))
-
-	for param_name, (param_defaulted, param_value) in context.items():
-		if not param_defaulted:
-			return (404, 'Parameters incorrectly defined on request')
-
-	return (200,'')
-
-def _version_1_0_validation_builder():
-	"""
-	Provides the sequence of validation steps to perform on the URL for version 1.0 of the API
-	"""
-	validation_sequence = []
-	validation_sequence.append((_version_1_0_context_checker, False, _version_1_0_stopped))
-	validation_sequence.append((_version_1_0_namespace_element_checker, True, None))
-	validation_sequence.append((_version_1_0_namespace_existence_checker, False, _version_1_0_stopped))
-	return validation_sequence
-
-def _version_1_0_request_validator(element_list, method):
-	"""
-	Iterates the supplied elements from the URL, sequentially involving the validator functions.
-	Processing stops at the first error.
-	"""
-	context = None
-	namespace = None
-	validators = _version_1_0_validation_builder()
-	for (validator, next_element_must_be_present, stopping_checks) in validators:
-		
 		# Validate the current element
-		((status, error_message), context, namespace) = validator(element_list[0], context, namespace, method)
+		(status, error_message) = self.validator_fn(element, request_context)
 
 		if status != 200:
 			# Validation failure
 			return (status, error_message)
 
-		# Pop off the first element
-		element_list = element_list[1:]
-		if not len(element_list):
-			if next_element_must_be_present:
-				# This is not a stopping point of the API, but there are no more elements
-				return (404, 'Path too short')
-			else:
-				# Check whether the request is valid for this stop point
-				(status, error_message) = stopping_checks(context, namespace, method)
+		if len(further_elements):
+			# More API to process 
+			if not len(self.next_elements):
+				# More elements in URL than is allowed
+				return (404, 'Path too long')
+
+			# Loop through next elements to see if any can continue to valid end-point
+			next_element = further_elements[0]
+			next_elements = further_elements[1:]
+			for processor in self.next_elements:
+				(status, error_message) = processor.handle_element(request_context, next_element, next_elements)
 				if status == 200:
-					# Valid stopping point
-					break
-				else:
-					# Something was badly formed with the request for it to stop here
+					# Return at first complete API validation
 					return (status, error_message)
 
-	# All good - syntactically correct URL
-	return (200, '')
+			# If we got here then all APITreeProcessor instances failed to provide a validated URL
+			return (404, 'Invalid Path')
 
-""" The set of validators for each version of the API """
-_API_VERSIONS = {API_VERSION_1_0:_version_1_0_request_validator}
+		# That's all of the URL provided by the requestor
+		# Determine is it is complete and accurate
+		if not self.stoppable:
+			# Can't stop here - invalid URL
+			return (404, 'Path too short')
 
-def validate_request_details(path_info, method):
-	""" 
-	All API requests should be of the form /<version>/context[matrix parameters]/namespace/...
-	so use this information to identify correct validator
+		# Could stop here - check it is valid to do so given prior data
+		(status, error_message) = self.stopping_validator_fn(request_context)
 
-	The expectation is that the path_info is an instance of zen_path_info.PathInfo class
+		if status != 200:
+			# Validation failure
+			return (status, error_message)
+		else:
+			# Looks ok
+			request_context.exec_fn = self.executor_fn
+			return (200, '')
 
+def _build_1_0_tree():
+	"""
+	Creates the tree of processors that can interrogate each branch of the API tree
 	"""
 
-	# Must have some elements - at least the version element and one more
-	if len(path_info.path_elements) < 2:
-		return (404, 'Incorrect path specified')
+	namespace_element = APITreeProcessor(
+							af._namespace_element_checker,
+							af._exec_noop,
+							True,	# Returns the list of visible namespaces based on metadata type
+							af._stopped_get_only,
+							[])
 
-	version_element = path_info.path_elements[0]
-	
-	# Version should not have any matrix parameters
-	(status, error) = _check_no_parameters(version_element)
-	if status != 200:
-		return (status, error)
+	context_element = APITreeProcessor(
+							af._context_checker,
+							af._return_context_parameters,
+							True,	# Returns the set of context parameters
+							af._stopped_get_only,
+							[namespace_element]
+							)
 
-	# Retrieve validator from the version list
-	version_validator = _API_VERSIONS.get(version_element.element_value, None)
-	if not version_validator:
-		return (404, 'Invalid version of API specified: ' + version_element.element_value)
+	# Base of the API tree is the context, since the metadata type is already known
+	return context_element
+
+
+""" The set of api_builders for each version of the API, allowing differentiation by meta type """
+_API_VERSIONS = {pd.API_VERSION_1_0: { 'data': _build_1_0_tree, 'model': _build_1_0_tree}}
+
+def validate_request_details(request_context):
+	""" 
+	All API requests should be of the form /<version>/<metadata [data|model]>/...
+	so use this information to identify correct validator
+	"""
+
+	# Retrieve api builder based on version and meta type
+	api_builder_map = _API_VERSIONS.get(request_context.version, None)
+	if not api_builder_map:
+		return (500, 'Unknown version of API specified: ' + request_context.version)
+
+	api_builder = api_builder_map.get(request_context.meta_type, None)
+	if not api_builder:
+		return (500, 'Unknown meta data type of API specified: ' + request_context.meta_type)
 
 	# Attempt to validate the request with the correct validator
 	try:
-		return version_validator(path_info.path_elements[1:], method)
+		processor = api_builder()
+		return processor.handle_element(
+								request_context,
+								request_context.path.path_elements[1],
+								request_context.path.path_elements[2:] if len(request_context.path.path_elements) > 1 else [])
+
 	except Exception as e:
 		return (500, e.message)
 
 
 if __name__ == "__main__":
 
-	def run_test(url, method, expected_status=200):
+	class test_request(object):
+		def __init__(self, method, requestor):
+			self.method = method
+			self.remote_user = requestor
+
+	def run_test(version, meta, url, method, expected_status=200):
 		url_parts = url.split('?')
 		url_path = url_parts[0]
 		url_qp = url_parts[1] if len(url_parts) > 1 else ''
-		(status, error_message) = validate_request_details(pi.PathInfo(url_path, url_qp), method)
+
+		request_context = rc.RequestContext(version, meta, pi.PathInfo(url_path, url_qp), test_request(method, None))
+		(status, error_message) = validate_request_details(request_context)
 
 		if status == expected_status:
 			print "Testing:", url, method, "- passed"
@@ -272,17 +153,16 @@ if __name__ == "__main__":
 			print "Testing:", url, method, "- failed", '({})'.format(status), error_message
 
 	# Run some tests
-	run_test('', METHOD_GET, 404)
-	run_test('a', METHOD_GET, 404)
-	run_test('1.0', METHOD_GET, 404)
-	run_test('1.0/a', METHOD_GET, 400)
-	run_test('1.0/context', METHOD_POST, 404)
-	run_test('1.0/context', METHOD_GET, 200)
-	run_test('1.0;a=b/context', METHOD_GET, 400)	
-	run_test('1.0/context;a=b', METHOD_GET, 400)
-	run_test('1.0/context;as_of=b', METHOD_GET, 404)
-	run_test('1.0/context;as_of=b/namespace', METHOD_GET, 404)
-	run_test('1.0/context;as_of=b/namespace/fred', METHOD_GET, 400)
-	run_test('1.0/context/namespace/global', METHOD_GET, 200)
-	run_test('1.0/context;as_of=b/namespace/global', METHOD_GET, 404)
-	run_test('1.0/context;as_of=b/namespace/global;x=y', METHOD_GET, 400)
+	run_test('','', '', pd.METHOD_GET, 500)
+	run_test('1.0','', '', pd.METHOD_GET, 500)
+	run_test('1.0','model', '', pd.METHOD_GET, 500)
+	run_test('1.0','model', '/context', pd.METHOD_GET, 200)
+	run_test('1.0','model', '/context', pd.METHOD_POST, 404)
+	run_test('1.0','model', '/context;a=b', pd.METHOD_GET, 400)
+	run_test('1.0','model', '/context;as_of=b', pd.METHOD_GET, 200)
+	run_test('1.0','model', '/context;as_of=b', pd.METHOD_GET, 200)
+	run_test('1.0','model', '/context;as_Of=b/namesp', pd.METHOD_GET, 404)
+	run_test('1.0','model', '/context;as_of=b/namespace', pd.METHOD_GET, 200)
+	run_test('1.0','model', '/context;as_of=b/namespAce', pd.METHOD_GET, 200)
+	run_test('1.0','model', '/context;as_of=b/namespAce', pd.METHOD_POST, 404)
+	run_test('1.0','model', '/context;as_of=b/namespace/fred', pd.METHOD_GET, 200)

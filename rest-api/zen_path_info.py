@@ -19,6 +19,7 @@ class PathInfo(object):
     def __init__(self, url_path, url_query_parameters):
         self.path_elements = []
         self.query_parameters = []
+        self.slash_at_start = True
         self._create_path_info(url_path, url_query_parameters)
 
     def _create_path_info(self, path, query_string):
@@ -64,6 +65,11 @@ class PathInfo(object):
 
             return ei
 
+        # Expects to start with '/'
+        if path[0] != '/':
+            path = '/' + path
+            self.slash_at_start = False
+
         # Split each element in the path
         for path_value in path.split("/"):
             self.path_elements.append(_get_element_info(path_value))
@@ -108,7 +114,10 @@ class PathInfo(object):
             query_str = _params_str(self.query_parameters, '&')
             ret_str = _join_str(ret_str, query_str, '?')
 
-        return _join_str('/', ret_str, '')
+        if self.slash_at_start:
+            return _join_str('/', ret_str, '')
+        else:
+            return ret_str
 
 if __name__ == "__main__":
 
@@ -131,7 +140,7 @@ if __name__ == "__main__":
         if passed:
             print 'Request:', url, '- passed'
         else:
-            print 'Request:', url, '- failed'
+            print 'Request:', url, '- failed (', pi_parts[0], ')'
 
     # Define some tests
     run_test('/')
@@ -145,6 +154,7 @@ if __name__ == "__main__":
     run_test('/a;xx=yy;zz=aa/b/c?x=1&y=2&z=3')
     run_test('/a;xx=yy;zz=aa;ii=jj/b/c?x=1&y=2&z=3')
     run_test('/a;xx=yy;zz=aa;ii=jj/b/c;rm=qq?x=1&y=2&z=3')
+    run_test('a;xx=yy;zz=aa;ii=jj/b/c;rm=qq?x=1&y=2&z=3')
 
 
 
