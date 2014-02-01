@@ -67,7 +67,7 @@ class PathInfo(object):
             return ei
 
         # Expects to start with '/'
-        if path[0] != '/':
+        if len(path) and path[0] != '/':
             path = '/' + path
             self.slash_at_start = False
 
